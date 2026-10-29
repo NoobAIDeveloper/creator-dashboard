@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Creator Command Center · Brevo</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">B</span>
+      <div>
+        <div class="brand-name">Creator Command Center</div>
+        <div class="brand-sub">Brevo growth marketing</div>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Sections">
+      <a href="#owned" data-view="owned">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Owned social</a>
+      <a href="#influencers" data-view="influencers">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Influencer performance</a>
+      <a href="#newsletters" data-view="newsletters">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+        Newsletters</a>
+      <a href="#upcoming" data-view="upcoming">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        Upcoming posts <span class="nav-count" id="nav-upcoming"></span></a>
+      <a href="#calendar" data-view="calendar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Content calendar</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="freshness" id="freshness">Loading data…</div>
+      <button class="btn-ghost" id="reload" type="button">Refresh</button>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="Open sections" aria-controls="sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <h1 id="view-title">Influencer performance</h1>
+    </header>
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+</div>
+
+<div class="drawer-scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-modal="true" role="dialog" aria-labelledby="drawer-title"></aside>
+<div class="tooltip" id="tooltip" hidden></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
