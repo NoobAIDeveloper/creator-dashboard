@@ -48,6 +48,10 @@ def main():
     brevo_app = {d: be for d, be, _ in read("brevo_shopify_app_installs.csv", "date", "brevo_app_installs", None)}
     # Shopify installs: Brevo app connections (Brevo Ecommerce) and PushOwl first installs (PushOwl).
     installs = [[d, brevo_app.get(d), po] for d, _, po in signups]
+    # Branded search: Search Console clicks on brevo.com for "brevo" + shopify/ecommerce/store queries.
+    # Clicks, not impressions: since 2026 many impressions come from AI-prompt-style queries that never click.
+    # NAO has no pushowl.com Search Console data, so the PushOwl half stays empty.
+    branded = read("gsc_branded_ecommerce_daily.csv", "date", "brevo_clicks", "pushowl_clicks")
 
     out = {
         "meta": {
@@ -61,6 +65,7 @@ def main():
             "npc": {"label": "NPCs", "long": "New paying customers", "rows": npc},
             "signups": {"label": "Signups", "long": "Signups", "rows": signups},
             "installs": {"label": "Shopify installs", "long": "Shopify app installs", "rows": installs},
+            "branded": {"label": "Branded search clicks", "long": "Branded search clicks", "rows": branded, "brevo_only": True},
         },
     }
     OUT.write_text(json.dumps(out, separators=(",", ":")))
