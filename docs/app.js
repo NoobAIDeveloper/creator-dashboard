@@ -615,6 +615,20 @@
     return out;
   }
 
+  // Under every chart: a verdict worked out from the same data (visible), and its method (folded).
+  const cardFoot = (id, verdict, method) => `<p class="verdict"${id ? ` id="${id}"` : ''}>${verdict}</p>
+    <details class="method-mini"><summary>Methodology</summary><p>${method}</p></details>`;
+  const METRIC_DEF = {
+    npc: 'NPC = a new paying customer, counted on the day of its first recurring invoice that wasn\'t cancelled. The last day or two always look low until billing data lands.',
+    signups: 'Signups: Brevo Ecommerce = new Brevo organizations in the Ecommerce BU, bots and fakes excluded, available from Nov 2, 2025. PushOwl = first-time PushOwl Shopify app installs, zero since the app was delisted on Oct 21, 2026.',
+    installs: 'Shopify installs: Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count). PushOwl = first-time PushOwl app installs.',
+    branded: 'Branded search: Search Console clicks to brevo.com from "brevo" + shopify / ecommerce / store searches.',
+  };
+  const dayList = (ks) => {
+    const t = ks.map((k) => String(k));
+    return t.length > 1 ? `${t.slice(0, -1).join(', ')} and ${t[t.length - 1]}` : t[0];
+  };
+
   // Bar series stacked in the chart: creator posts by platform, then newsletter sends on top.
   function impStack(buckets) {
     const keys = [...new Set(buckets.flatMap((x) => Object.keys(x.byP)))].sort(byPlatformOrder);
@@ -659,7 +673,7 @@
     const lg = (key, swatch, label) => `<button type="button" class="lg-item" data-imp-series="${esc(key)}" aria-pressed="${!f.hidden.has(key)}" title="Show or hide">${swatch} ${esc(label)}</button>`;
 
     return `
-      <p class="lede">Creator posts going live against <b>${esc(m.long)}</b> for the <b>${esc(segName)}</b>, ${esc(fmtDay(fromIso, true))} to ${esc(fmtDay(toIso, true))}.</p>
+      <p class="lede">Creator posts going live against <b>${esc(m.long)}</b> for ${f.segment === 'po' ? '' : 'the '}<b>${esc(segName)}</b>, ${esc(fmtDay(fromIso, true))} to ${esc(fmtDay(toIso, true))}.</p>
       <div class="toolbar">
         <div class="field"><span class="label">Line</span>
           <div class="seg" role="group" aria-label="Line metric">
@@ -706,6 +720,11 @@
           <span class="lg-hint">Click to show or hide</span>
         </div>
         <div class="chart" id="imp-chart"></div>
+        ${cardFoot('', (missing || change === null
+          ? `${fmtN(total)} ${esc(m.label.toLowerCase())} in this period`
+          : `${esc(m.label)} ${change >= 0 ? 'up' : 'down'} <b>${Math.abs(change * 100).toFixed(1)}%</b> on the previous ${span} days`)
+          + ` for ${f.segment === 'po' ? '' : 'the '}${esc(segName)}, with <b>${postsN}</b> creator post${postsN === 1 ? '' : 's'}${sendsN ? ` and ${sendsN} newsletter send${sendsN === 1 ? '' : 's'}` : ''} live.`,
+          `${METRIC_DEF[f.metric] || ''} The line covers the whole ${esc(segName)}, not only customers attributed to creators. Bars are creator posts by platform and newsletter sends from the Command Center sheet${f.bars === 'reach' ? '; impressions are counted on the day a post went live, at their latest reading (views for video), and newsletter sends count their recipients' : ''}. The change compares with the previous period of the same length.`)}
       </section>
       <div class="grid-2">
         <section class="card">
@@ -713,18 +732,19 @@
           <div class="seg seg-sm" role="group" aria-label="Platform for the lag view">
             ${['all', ...lagPlats].map((p) => `<button data-imp-lagpf="${esc(p)}" aria-pressed="${f.lagPf === p}">${p === 'all' ? 'All' : esc(p)}</button>`).join('')}
           </div>
-          ${lagOk ? `<div class="chart" id="imp-lag"></div><p class="note" id="imp-lag-note"></p>`
+          ${lagOk ? `<div class="chart" id="imp-lag"></div>${cardFoot('imp-lag-note', '', `For each day with creator posts (day 0), ${esc(m.label)} on that day and each of the next 14 are compared with a normal day: the same weekday, adjusted for the trend at the time. The grey box is the range chance alone produces (95%); only bars outside it are coloured. Uses every post since Jan 2025, whatever the date range.`)}`
             : `<p class="muted">Needs posts on at least 5 days. There are ${lagPostDays} so far.</p>`}
         </section>
         <section class="card">
           <div class="card-head"><h2>Signup to NPC conversion</h2><span class="muted">NPCs per 100 signups, same week · ${esc(segName)}</span></div>
           <div class="chart" id="imp-conv"></div>
+          ${cardFoot('imp-conv-verdict', '', 'NPCs divided by signups in the same week, for the selected segment. Some customers pay months after signing up, so a jump in signups lowers this rate at first even when the new signups convert normally. Shows the last 12 weeks when the selected range is shorter than 8 weeks.')}
         </section>
         ${timeToPayCard()}
         ${cohortCard()}
       </div>
       ${campaignCard(m, segName)}
-      ${methodology()}`;
+`;
   }
 
   function bindImpact(el) {
@@ -888,10 +908,11 @@
     const real = lags.filter((l) => l.lift !== null && Math.abs(l.lift) > l.noise).sort((a, b) => b.lift - a.lift);
     const note = $('#imp-lag-note');
     if (note) {
-      const days = (k) => (k === 0 ? 'on posting days' : `${k} day${k === 1 ? '' : 's'} after posting days`);
+      const up = real.filter((l) => l.lift > 0).sort((a, b) => a.k - b.k), down = real.filter((l) => l.lift < 0).sort((a, b) => a.k - b.k);
+      const part = (ls, word) => `${word} normal ${ls.some((l) => l.k === 0) && ls.length === 1 ? 'on the day itself' : `${dayList(ls.map((l) => l.k))} day${ls.length === 1 && ls[0].k === 1 ? '' : 's'} after posting`} (${word === 'above' ? 'up to' : 'down to'} <b>${pct(word === 'above' ? Math.max(...ls.map((l) => l.lift)) : Math.min(...ls.map((l) => l.lift)))}</b>)`;
       note.innerHTML = real.length
-        ? real.map((l) => `<b>${pct(l.lift)}</b> ${days(l.k)}`).join(' · ')
-        : 'No day stands out from the normal range yet.';
+        ? `${esc(m.label)} ran ${[up.length ? part(up, 'above') : '', down.length ? part(down, 'below') : ''].filter(Boolean).join(', and ')}. Other days are within the normal range.`
+        : `No day stands out: ${esc(m.label)} after creator posts look like any comparable day.`;
     }
   }
 
@@ -937,6 +958,21 @@
       });
   }
 
+  function campaignVerdict(rows, m) {
+    const pct = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}%`;
+    const named = (rs) => rs.map((r) => `${esc(campaignName(r.c.campaign_id))} (<b>${pct(r.lift)}</b>)`).join(' and ');
+    const done = rows.filter((r) => r.lift !== null);
+    if (!done.length) return 'Not enough data around these campaigns to compare yet.';
+    const above = done.filter((r) => Math.abs(r.lift) > r.noise && r.lift > 0);
+    const below = done.filter((r) => Math.abs(r.lift) > r.noise && r.lift < 0);
+    const within = done.filter((r) => Math.abs(r.lift) <= r.noise);
+    return [
+      above.length ? `${esc(m.label)} ran above normal during ${named(above)}.` : '',
+      within.length ? `${above.length ? 'They were' : `${esc(m.label)} were`} within the normal range during ${named(within)}.` : '',
+      below.length ? `${esc(m.label)} ran below normal during ${named(below)}.` : '',
+    ].filter(Boolean).join(' ');
+  }
+
   function campaignCard(m, segName) {
     const rows = impCampaigns();
     if (!rows.length) return '';
@@ -963,7 +999,7 @@
             <td class="num">${r.yoy === null ? '<span class="dash">—</span>' : pct(r.yoy)}</td>
           </tr>`).join('')}</tbody>
         </table></div>
-
+        ${cardFoot('', campaignVerdict(rows, m), 'Each campaign\'s days are compared with the same weekdays in the 4 weeks before it started. "Above normal" means the change is outside the range chance produces over that many days. "Last year" compares the same weekdays a year earlier and includes a year of business growth. Overlapping campaigns share days, so their figures don\'t add up.')}
       </section>`;
   }
 
@@ -1021,6 +1057,16 @@
     weeks.forEach((x, i) => { svg += `<rect data-i="${i}" x="${mg.l + i * bw}" y="${mg.t}" width="${bw}" height="${ih}" fill="transparent" />`; });
     svg += '</svg>';
     box.innerHTML = (short ? '<p class="muted" style="margin:0 0 .4rem">Showing the last 12 weeks: the selected range is too short for a weekly rate.</p>' : '') + svg;
+    const v = $('#imp-conv-verdict');
+    if (v) {
+      const firstPost = weeks.findIndex((x) => x.posts);
+      const avg = (ws) => (sum(ws.map((x) => x.su)) ? (sum(ws.map((x) => x.npc)) / sum(ws.map((x) => x.su))) * 100 : null);
+      const cw = avg(weeks.filter((x) => x.posts && x.rate !== null));
+      const bw = firstPost > 0 ? avg(weeks.slice(0, firstPost).filter((x) => x.rate !== null)) : null;
+      v.innerHTML = firstPost < 0 ? 'No creator posts in these weeks.'
+        : cw === null || bw === null ? 'Not enough complete weeks before and during the creator posts to compare.'
+        : `<b>${cw.toFixed(1)}</b> NPCs per 100 signups in creator weeks, against <b>${bw.toFixed(1)}</b> in the weeks before.${cw < bw ? ' Signups grew faster than older signups paid off; the cohort chart shows how the new signups themselves converted.' : ''}`;
+    }
     box.querySelectorAll('rect[data-i]').forEach((r) => {
       r.addEventListener('mousemove', (e) => {
         const x = weeks[+r.dataset.i];
@@ -1062,6 +1108,8 @@
             <span class="track"><span class="fill" style="width:${(d.share / maxShare) * 100}%;background:var(--metric)"></span></span>
             <span class="val">${fmtPct(d.share)}</span></div>`).join('')}
         </div>
+        ${cardFoot('', `Half of Brevo Ecommerce customers pay within <b>${recentMed === null ? '—' : days(recentMed)}</b> of signing up, and ${fmtPct(week)} within a week, so a signup week's quality shows within about two weeks.`,
+          `Days from signup to first payment for Brevo Ecommerce customers who started paying between Jan 2025 and Nov 2026. "Typical" is the median of the last three full months. PushOwl runs from first app install to first payment and covers the 62% of PushOwl customers that could be matched to an install. Counted per organization with today's business unit, so totals differ slightly from the daily charts.`)}
       </section>`;
   }
 
@@ -1073,9 +1121,12 @@
         <div class="legend">
           <span><i class="lg-line"></i> Paying within 14 days</span>
           <span><i class="lg-line dash"></i> Paying within 30 days</span>
+          <span><i class="lg-dot"></i> Creator week</span>
+          <span><i class="lg-band"></i> Normal range</span>
           <span><i class="lg-box"></i> Creator posts that week</span>
         </div>
         <div class="chart" id="imp-cohort"></div>
+        ${cardFoot('imp-cohort-verdict', '', 'Each point is a week of Brevo Ecommerce signups: the share paying within 14 days (solid) or 30 days (dashed), shown once that window has passed. Creator weeks are weeks with at least one creator post; the campaign filter applies. The shaded band is the normal range of the 14-day rate in the 8 weeks before the first creator week (±2 standard deviations). "In line" means the creator-week average is within the range chance produces for that many weeks.')}
       </section>`;
   }
 
@@ -1122,8 +1173,36 @@
       });
       return `<path d="${d}" fill="none" stroke="${dash ? 'var(--fg-2)' : 'var(--metric)'}" stroke-width="${dash ? 1.5 : 2}" ${dash ? 'stroke-dasharray="4 3"' : ''} stroke-linejoin="round" />`;
     };
+    // Baseline: the 8 complete weeks before the first creator week.
+    const firstPost = weeks.findIndex((x) => x.posts);
+    const base = firstPost > 0 ? weeks.slice(0, firstPost).filter((x) => x.r14 !== null && !x.posts).slice(-8) : [];
+    const creator = weeks.filter((x) => x.posts && x.r14 !== null);
+    const wavg = (ws) => (sum(ws.map((x) => x.d14)) / sum(ws.map((x) => x.signups))) * 100;
+    let bMean = null, bSd = null;
+    if (base.length >= 4) {
+      bMean = wavg(base);
+      bSd = Math.sqrt(sum(base.map((x) => (x.r14 - bMean) ** 2)) / (base.length - 1));
+      const i0 = weeks.indexOf(base[0]);
+      svg += `<rect x="${mg.l + i0 * bw}" y="${yV(bMean + 2 * bSd)}" width="${W - mg.r - (mg.l + i0 * bw)}" height="${yV(Math.max(0, bMean - 2 * bSd)) - yV(bMean + 2 * bSd)}" fill="var(--metric)" opacity=".12" />`;
+    }
     svg += line('r30', true) + line('r14', false);
-    weeks.forEach((x, i) => { if (x.r14 !== null) svg += `<circle cx="${cx(i)}" cy="${yV(x.r14)}" r="2.5" fill="var(--metric)" />`; });
+    weeks.forEach((x, i) => {
+      if (x.r14 === null) return;
+      svg += x.posts
+        ? `<circle cx="${cx(i)}" cy="${yV(x.r14)}" r="5" fill="var(--metric)" stroke="var(--surface)" stroke-width="2" />`
+        : `<circle cx="${cx(i)}" cy="${yV(x.r14)}" r="2" fill="var(--fg-3)" />`;
+    });
+    const v = $('#imp-cohort-verdict');
+    if (v) {
+      if (firstPost < 0) v.innerHTML = 'No creator posts in these signup weeks.';
+      else if (!creator.length) v.innerHTML = 'Creator weeks haven\'t completed their 14-day window yet.';
+      else if (bMean === null) v.innerHTML = 'Not enough complete weeks before the creator posts to set a normal range.';
+      else {
+        const c = wavg(creator), noise = (2 * bSd) / Math.sqrt(creator.length);
+        const call = Math.abs(c - bMean) <= noise ? 'in line with usual' : c > bMean ? 'above usual' : 'below usual';
+        v.innerHTML = `Creator-week signups: <b>${c.toFixed(1)}%</b> paid within 14 days, against <b>${bMean.toFixed(1)}%</b> in the 8 weeks before, <b>${call}</b> (${creator.length} creator week${creator.length === 1 ? '' : 's'} with a complete 14-day window).`;
+      }
+    }
     weeks.forEach((x, i) => { svg += `<rect data-i="${i}" x="${mg.l + i * bw}" y="${mg.t}" width="${bw}" height="${ih}" fill="transparent" />`; });
     svg += '</svg>';
     box.innerHTML = svg;
@@ -1138,24 +1217,6 @@
       });
       r.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; });
     });
-  }
-
-  function methodology() {
-    return `
-      <details class="method">
-        <summary>How these numbers are calculated</summary>
-        <ul>
-          <li><b>Data.</b> NPCs, signups and Shopify installs come from NAO for the Ecommerce BU, split into Brevo Ecommerce and PushOwl. The lines show the whole segment, not only customers attributed to creators, so they show trend, not cause. Creator posts and newsletter sends come from the Command Center sheet.</li>
-          <li><b>NPC</b> = a new paying customer, counted on the day of its first recurring invoice that wasn't cancelled. The last day or two always look low until billing data lands.</li>
-          <li><b>Signups.</b> Brevo Ecommerce = new Brevo organizations in the Ecommerce BU, bots and fakes excluded, available from Nov 2, 2025. PushOwl = shops installing the PushOwl Shopify app for the first time; zero from Oct 21, 2026, when the app was delisted.</li>
-          <li><b>Shopify installs.</b> Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count). PushOwl = first-time PushOwl app installs.</li>
-          <li><b>Impressions</b> are counted on the day a post went live, at their latest reading (views for video). Newsletter sends count their recipients.</li>
-          <li><b>Days after a post.</b> For each day with creator posts, the metric on that day and each of the next 14 is compared with a normal day: the same weekday, adjusted for the trend at the time. The grey box is the range chance alone produces (95%); only bars outside it are coloured. Uses every post since Jan 2025, whatever the date range.</li>
-          <li><b>Conversion.</b> NPCs ÷ signups in the same week. Some NPCs pay months after signing up, so a jump in signups lowers this rate at first. The cohort chart follows each signup week instead: the share paying within 14 and 30 days, shown once that window has passed.</li>
-          <li><b>Time to pay</b> is days from signup to first payment for Brevo Ecommerce NPCs since Jan 2025. PushOwl's figure runs from first app install and covers the 62% of PushOwl NPCs that could be matched to an install.</li>
-          <li><b>Campaigns.</b> Each campaign's days are compared with the same weekdays in the 4 weeks before it started; "above normal" means outside the chance range. "Last year" compares the same weekdays a year earlier and includes a year of business growth. Overlapping campaigns share days, so their figures don't add up.</li>
-        </ul>
-      </details>`;
   }
 
   function downloadImpactCsv(buckets) {
