@@ -109,7 +109,7 @@
       const b = await r.json();
       const metrics = {};
       Object.entries(b.metrics || {}).forEach(([k, m]) => {
-        metrics[k] = { label: m.label, long: m.long || m.label, brevoOnly: !!m.brevo_only, map: new Map((m.rows || []).map(([d, be, po]) => [d, [num(be), num(po)]])) };
+        metrics[k] = { label: m.label, long: m.long || m.label, only: m.only || '', map: new Map((m.rows || []).map(([d, be, po]) => [d, [num(be), num(po)]])) };
       });
       return { meta: b.meta || {}, metrics, conversion: b.conversion || null };
     } catch (e) {
@@ -489,7 +489,7 @@
   const SEGMENTS = [['total', 'Ecommerce BU'], ['be', 'Brevo Ecommerce'], ['po', 'PushOwl']];
   // Branded search (state.biz.metrics.branded) is loaded but not offered yet: volumes are too low to read.
   // Add ['branded', 'Branded search'] back here once it picks up.
-  const LINE_METRICS = [['npc', 'NPCs'], ['signups', 'Signups'], ['installs', 'Shopify installs']];
+  const LINE_METRICS = [['npc', 'NPCs'], ['signups', 'Signups'], ['installs', 'Shopify installs'], ['organic', 'Organic search']];
   const RANGES = [['30d', '30 days'], ['90d', '90 days'], ['12m', '12 months'], ['qtd', 'Quarter to date'], ['ytd', 'Year to date'], ['custom', 'Custom']];
   const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
 
@@ -531,8 +531,10 @@
   const metricVal = (key, iso) => {
     const m = state.biz.metrics[key];
     if (!m || !m.map.has(iso)) return null;
-    // Brevo-only metrics (branded search): the BU view shows the Brevo half, PushOwl has no data.
-    if (m.brevoOnly) return state.imp.segment === 'po' ? null : m.map.get(iso)[0];
+    // Single-source metrics (branded search: brevo.com; organic search: pushowl.com): the BU view
+    // shows the half that exists, and the other segment has no data.
+    if (m.only === 'brevo') return state.imp.segment === 'po' ? null : m.map.get(iso)[0];
+    if (m.only === 'pushowl') return state.imp.segment === 'be' ? null : m.map.get(iso)[1];
     return segVal(m.map.get(iso));
   };
 
@@ -622,6 +624,7 @@
     npc: 'NPC = a new paying customer, counted on the day of its first recurring invoice that wasn\'t cancelled. The last day or two always look low until billing data lands.',
     signups: 'Signups: Brevo Ecommerce = new Brevo organizations in the Ecommerce BU, bots and fakes excluded, available from Nov 2, 2025. PushOwl = first-time PushOwl Shopify app installs, zero since the app was delisted on Oct 21, 2026.',
     installs: 'Shopify installs: Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count). PushOwl = first-time PushOwl app installs.',
+    organic: 'Organic search: sessions arriving on pushowl.com from unpaid search results, from PushOwl\'s Google Analytics (Organic Search channel). It covers all organic searches, not only ones naming PushOwl, so blog traffic is included. There is no Brevo Ecommerce equivalent, so the Ecommerce BU view shows pushowl.com only. The PushOwl app was delisted from the Shopify App Store on Oct 21, 2026, which lowered PushOwl search from then.',
     branded: 'Branded search: Search Console clicks to brevo.com from "brevo" + shopify / ecommerce / store searches.',
   };
   const dayList = (ks) => {
@@ -645,6 +648,8 @@
       return `<div class="empty"><h3>No business data loaded</h3><p>This tab reads <code>data/business.json</code>${b && b.error ? ` (${esc(b.error)})` : ''}.</p></div>`;
     }
     if (!b.metrics[f.metric] || !LINE_METRICS.some(([k]) => k === f.metric)) f.metric = 'signups';
+    const only = b.metrics[f.metric].only;
+    if ((only === 'pushowl' && f.segment === 'be') || (only === 'brevo' && f.segment === 'po')) f.segment = 'total';
     const { from, to, first, end } = impRange();
     const days = impDaily(from, to);
     const buckets = impBuckets(days);
@@ -681,7 +686,7 @@
           </div></div>
         <div class="field"><span class="label">Segment</span>
           <div class="seg" role="group" aria-label="Segment">
-            ${SEGMENTS.map(([k, l]) => `<button data-imp-seg="${k}" aria-pressed="${f.segment === k}">${l}</button>`).join('')}
+            ${SEGMENTS.map(([k, l]) => { const off = (m.only === 'pushowl' && k === 'be') || (m.only === 'brevo' && k === 'po'); return `<button data-imp-seg="${k}" aria-pressed="${f.segment === k}" ${off ? `disabled title="${esc(m.label)} has no ${esc(l)} data"` : ''}>${l}</button>`; }).join('')}
           </div></div>
         <div class="field"><span class="label">Bars</span>
           <div class="seg" role="group" aria-label="Bar measure">

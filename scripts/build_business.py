@@ -68,6 +68,15 @@ def conversion():
     }
 
 
+def pushowl_organic():
+    """GA4 export (PushOwl property, Reports > Acquisition > Traffic acquisition, Organic Search by Date)."""
+    with open(SRC / "pushowl_ga4_organic_search_daily.csv", newline="") as f:
+        rows = list(csv.DictReader(l for l in f if l.strip() and not l.startswith("#")))
+    by_day = {f"{r['Date'][:4]}-{r['Date'][4:6]}-{r['Date'][6:]}": int(r["Sessions"])
+              for r in rows if r["Session primary channel group (Default Channel Group)"] == "Organic Search"}
+    return [[d, None, by_day[d]] for d in sorted(by_day)]
+
+
 def main():
     npc = read("npc_daily_ecommerce.csv", "npc_date", "brevo_ecommerce_npc", "pushowl_npc")
     signups = zero_after_delisting(read("signups_daily_ecommerce.csv", "signup_date", "brevo_ecommerce_signups", "pushowl_new_shops"))
@@ -92,7 +101,9 @@ def main():
             "npc": {"label": "NPCs", "long": "New paying customers", "rows": npc},
             "signups": {"label": "Signups", "long": "Signups", "rows": signups},
             "installs": {"label": "Shopify installs", "long": "Shopify app installs", "rows": installs},
-            "branded": {"label": "Branded search clicks", "long": "Branded search clicks", "rows": branded, "brevo_only": True},
+            "branded": {"label": "Branded search clicks", "long": "Branded search clicks", "rows": branded, "only": "brevo"},
+            # pushowl.com only: GA4 organic search sessions (all organic, not just branded queries).
+            "organic": {"label": "Organic sessions", "long": "Organic search sessions to pushowl.com", "rows": pushowl_organic(), "only": "pushowl"},
         },
     }
     OUT.write_text(json.dumps(out, separators=(",", ":")))
