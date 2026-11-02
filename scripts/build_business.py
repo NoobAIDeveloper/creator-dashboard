@@ -42,6 +42,32 @@ def zero_after_delisting(rows):
     return rows
 
 
+def num(v):
+    v = str(v).replace(",", "").strip()
+    return float(v) if v else None
+
+
+def table(name):
+    with open(SRC / name, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def conversion():
+    """Signup → NPC timing for Brevo Ecommerce, and install → NPC for PushOwl (see 07_signup_to_npc.sql)."""
+    pct = ["npc_count", "mean", "p25", "median", "p75", "p90"]
+    by_month = [{"month": r["npc_month"].split(" ")[0], **{k: num(r[k]) for k in pct}}
+                for r in table("ecommerce_days_to_npc_by_month.csv")]
+    return {
+        "by_month": by_month,
+        "distribution": [{"bucket": r["days_bucket"], "count": num(r["npc_count"]), "share": num(r["share"])}
+                         for r in table("ecommerce_days_to_npc_distribution.csv")],
+        "cohorts": [{"week": r["signup_week"], "signups": num(r["signups"]),
+                     **{f"d{n}": num(r[f"npc_within_{n}d"]) for n in (14, 30, 60, 90)}}
+                    for r in table("ecommerce_signup_week_npc_cohorts.csv")],
+        "pushowl": [{"cut": r["cut"], **{k: num(r[k]) for k in pct}} for r in table("pushowl_install_to_npc.csv")],
+    }
+
+
 def main():
     npc = read("npc_daily_ecommerce.csv", "npc_date", "brevo_ecommerce_npc", "pushowl_npc")
     signups = zero_after_delisting(read("signups_daily_ecommerce.csv", "signup_date", "brevo_ecommerce_signups", "pushowl_new_shops"))
@@ -61,6 +87,7 @@ def main():
             "pushowl_delisted": PUSHOWL_DELISTED,
         },
         "columns": ["date", "brevo_ecommerce", "pushowl"],
+        "conversion": conversion(),
         "metrics": {
             "npc": {"label": "NPCs", "long": "New paying customers", "rows": npc},
             "signups": {"label": "Signups", "long": "Signups", "rows": signups},

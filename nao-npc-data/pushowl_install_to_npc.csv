@@ -1,0 +1,5 @@
+cut,npc_count,mean,p25,median,p75,p90
+All matched,"4,519",55.7,18,29,47,130
+Domain match only (stronger match),"2,406",57.3,18,29,49,142
+NPC in 2025,"2,600",41.0,17,28,43,84
+NPC in 2026,"1,919",75.5,19,32,63,229

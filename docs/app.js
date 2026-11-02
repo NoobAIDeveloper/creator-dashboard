@@ -111,7 +111,7 @@
       Object.entries(b.metrics || {}).forEach(([k, m]) => {
         metrics[k] = { label: m.label, long: m.long || m.label, brevoOnly: !!m.brevo_only, map: new Map((m.rows || []).map(([d, be, po]) => [d, [num(be), num(po)]])) };
       });
-      return { meta: b.meta || {}, metrics };
+      return { meta: b.meta || {}, metrics, conversion: b.conversion || null };
     } catch (e) {
       return { meta: {}, metrics: {}, error: e.message };
     }
@@ -492,11 +492,6 @@
   const LINE_METRICS = [['npc', 'NPCs'], ['signups', 'Signups'], ['installs', 'Shopify installs']];
   const RANGES = [['30d', '30 days'], ['90d', '90 days'], ['12m', '12 months'], ['qtd', 'Quarter to date'], ['ytd', 'Year to date'], ['custom', 'Custom']];
   const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
-  const METRIC_NOTES = {
-    branded: '<b>How branded search is counted:</b> Google Search Console clicks to brevo.com from searches containing "brevo" plus shopify, ecommerce, e-commerce, woocommerce or store. Clicks rather than impressions, because since 2026 many impressions come from long AI-style prompts that never click. Volumes are small (a handful of clicks a day), so read weekly. Anonymised queries aren\'t counted, so these are lower bounds. There is no Search Console data for pushowl.com yet, so the PushOwl segment is empty and the Ecommerce BU view shows brevo.com only.',
-    signups: '<b>How signups are counted:</b> Brevo Ecommerce = new Brevo organizations in the Ecommerce BU (bots and fakes excluded). PushOwl = shops installing the PushOwl Shopify app for the first time. The PushOwl app was delisted from the Shopify App Store, so PushOwl signups are zero from <b>Oct 21, 2026</b>. Brevo Ecommerce signups only exist from <b>Nov 2, 2025</b>: older days can\'t be assigned a BU, so they show as a gap.',
-    installs: '<b>How installs are counted:</b> Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count again). PushOwl = shops installing the PushOwl Shopify app for the first time, zero since its delisting on <b>Oct 21, 2026</b>. These come from Brevo\'s own data, not the Shopify Partner Dashboard.',
-  };
 
   // null = no data for that day (e.g. a tracking gap), which is different from 0, so a missing
   // half makes the Ecommerce BU total missing too.
@@ -664,8 +659,7 @@
     const lg = (key, swatch, label) => `<button type="button" class="lg-item" data-imp-series="${esc(key)}" aria-pressed="${!f.hidden.has(key)}" title="Show or hide">${swatch} ${esc(label)}</button>`;
 
     return `
-      <p class="lede">Creator posts going live against <b>${esc(m.long)}</b> for the <b>${esc(segName)}</b>, ${esc(fmtDay(fromIso, true))} to ${esc(fmtDay(toIso, true))}. The line is the whole segment, not only customers attributed to creators: read it for trend, not cause.</p>
-      ${METRIC_NOTES[f.metric] ? `<div class="notice"><span>${METRIC_NOTES[f.metric]}</span></div>` : ''}
+      <p class="lede">Creator posts going live against <b>${esc(m.long)}</b> for the <b>${esc(segName)}</b>, ${esc(fmtDay(fromIso, true))} to ${esc(fmtDay(toIso, true))}.</p>
       <div class="toolbar">
         <div class="field"><span class="label">Line</span>
           <div class="seg" role="group" aria-label="Line metric">
@@ -712,25 +706,25 @@
           <span class="lg-hint">Click to show or hide</span>
         </div>
         <div class="chart" id="imp-chart"></div>
-        ${f.bars === 'reach' ? `<p class="note">Impressions are counted on the day each post went live (views for video, impressions otherwise), at their latest reading. Newsletter sends count their reported recipients.${sum(buckets.map((x) => x.noExp)) ? ` ${sum(buckets.map((x) => x.noExp))} posts in this range have no views logged yet and add nothing.` : ''}</p>` : ''}
       </section>
+      <div class="grid-2">
+        <section class="card">
+          <div class="card-head"><h2>${esc(m.label)} in the days after ${esc(lagWho)}</h2><span class="muted">vs a normal day · ${lagPostDays} posting days since ${esc(fmtDay(isoDay(lagFrom), true))}</span></div>
+          <div class="seg seg-sm" role="group" aria-label="Platform for the lag view">
+            ${['all', ...lagPlats].map((p) => `<button data-imp-lagpf="${esc(p)}" aria-pressed="${f.lagPf === p}">${p === 'all' ? 'All' : esc(p)}</button>`).join('')}
+          </div>
+          ${lagOk ? `<div class="chart" id="imp-lag"></div><p class="note" id="imp-lag-note"></p>`
+            : `<p class="muted">Needs posts on at least 5 days. There are ${lagPostDays} so far.</p>`}
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Signup to NPC conversion</h2><span class="muted">NPCs per 100 signups, same week · ${esc(segName)}</span></div>
+          <div class="chart" id="imp-conv"></div>
+        </section>
+        ${timeToPayCard()}
+        ${cohortCard()}
+      </div>
       ${campaignCard(m, segName)}
-      <section class="card">
-        <div class="card-head"><h2>What happens to ${esc(m.label)} in the days after ${esc(lagWho)}?</h2><span class="muted">All posts since ${esc(fmtDay(isoDay(lagFrom), true))} · ${lagPostDays} posting days · not limited by the date range above</span></div>
-        <div class="seg" role="group" aria-label="Platform for the lag view">
-          ${['all', ...lagPlats].map((p) => `<button data-imp-lagpf="${esc(p)}" aria-pressed="${f.lagPf === p}">${p === 'all' ? 'All platforms' : esc(p)}</button>`).join('')}
-        </div>
-        ${lagOk ? `
-          <p class="note">For every day ${esc(lagWho)} went live (<b>day 0</b>), we take ${esc(m.label)} on that day and on each of the 14 days after, and compare them with a <b>normal day</b>: the same weekday, adjusted for the overall trend at that time. A bar at <b>+5%</b> over <b>+3</b> means that 3 days after posting days, ${esc(m.label)} averaged 5% above normal. The grey box behind each bar is the range chance alone produces: a bar that stays inside its box is not a real signal, and only bars that break out of it are coloured.</p>
-          <div class="chart" id="imp-lag"></div>
-          <p class="note" id="imp-lag-note"></p>`
-        : `<p class="muted">Needs posts on at least 5 days. There are ${lagPostDays} so far${f.campaign !== 'all' ? ' for this campaign' : ''}${f.lagPf !== 'all' ? ` on ${esc(f.lagPf)}` : ''}.</p>`}
-      </section>
-      <section class="card">
-        <div class="card-head"><h2>Signup to NPC conversion</h2><span class="muted">NPCs per 100 signups, per week · ${esc(segName)}</span></div>
-        <div class="chart" id="imp-conv"></div>
-        <p class="note">Creator campaigns bring in signups first. People then try Brevo on the free plan, and only some of them start paying once they've used it for a while, so NPCs from a wave of signups arrive weeks later. Both counts here come from the same week, which means a surge in signups pulls this rate down at first: the new signups are counted, but they haven't had time to convert yet. Watch the weeks after a campaign. If the rate recovers, or goes above where it was, the signups were good quality.</p>
-      </section>`;
+      ${methodology()}`;
   }
 
   function bindImpact(el) {
@@ -763,6 +757,8 @@
     if (lagBox) { const r = impRange(); drawLags(lagBox, impLags(impDaily(r.first, r.end), 14, f.lagPf)); }
     const convBox = el.querySelector('#imp-conv');
     if (convBox) drawConversion(convBox);
+    const cohBox = el.querySelector('#imp-cohort');
+    if (cohBox) drawCohorts(cohBox);
     on('#imp-csv', 'click', () => downloadImpactCsv(buckets));
   }
 
@@ -894,8 +890,8 @@
     if (note) {
       const days = (k) => (k === 0 ? 'on posting days' : `${k} day${k === 1 ? '' : 's'} after posting days`);
       note.innerHTML = real.length
-        ? `<b>What this shows:</b> ${real.map((l) => `${esc(m.label)} ran <b>${pct(l.lift)}</b> vs normal ${days(l.k)}`).join('; ')}. Every other day is within chance. One or two bars outside their box can still be luck when 15 are tested, so look for the same day standing out across campaigns before reading it as an effect.`
-        : `<b>What this shows:</b> no day stands out from chance. ${esc(m.label)} after creator posts look like ${esc(m.label)} on any other comparable day.`;
+        ? real.map((l) => `<b>${pct(l.lift)}</b> ${days(l.k)}`).join(' · ')
+        : 'No day stands out from the normal range yet.';
     }
   }
 
@@ -967,7 +963,7 @@
             <td class="num">${r.yoy === null ? '<span class="dash">—</span>' : pct(r.yoy)}</td>
           </tr>`).join('')}</tbody>
         </table></div>
-        <p class="note"><b>Change vs before</b> compares each day of the campaign with the same weekday in the 4 weeks before it started. It is marked above or below normal only when it falls outside what chance produces over that many days. <b>Change vs last year</b> also includes a year of business growth, so read it as context. Campaigns that overlap share the same days, so their numbers aren't additive.${state.imp.metric === 'signups' ? ' Brevo Ecommerce signups start on Nov 2, 2025, so there is no last-year figure yet.' : ''}</p>
+
       </section>`;
   }
 
@@ -1035,6 +1031,131 @@
       });
       r.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; });
     });
+  }
+
+  // How fast Brevo Ecommerce signups start paying, from NAO's org-level signup → NPC table.
+  function timeToPayCard() {
+    const c = state.biz.conversion;
+    if (!c) return '';
+    const months = c.by_month.filter((r) => r.month !== 'Overall' && r.npc_count >= 500);
+    const recent = months.slice(-3);
+    const recentMed = recent.length ? [...recent.map((r) => r.median)].sort((a, b) => a - b)[Math.floor(recent.length / 2)] : null;
+    const overall = c.by_month.find((r) => r.month === 'Overall');
+    const share = (buckets) => sum(c.distribution.filter((d) => buckets.includes(d.bucket)).map((d) => d.share));
+    const sameDay = share(['0']), week = share(['0', '1-7']), month = share(['0', '1-7', '8-14', '15-30']), late = share(['91-180', '181-365', '365+']);
+    const po = (c.pushowl || []).find((r) => r.cut === 'All matched');
+    const maxShare = Math.max(...c.distribution.map((d) => d.share));
+    const days = (n) => `${n} day${n === 1 ? '' : 's'}`;
+    const mon = (ym) => MON[+ym.slice(5, 7) - 1];
+    const span = recent.length ? `${mon(recent[0].month)}–${mon(recent[recent.length - 1].month)} ${recent[recent.length - 1].month.slice(0, 4)}` : '';
+    return `
+      <section class="card">
+        <div class="card-head"><h2>How fast signups start paying</h2><span class="muted">Brevo Ecommerce, signup to first payment</span></div>
+        <div class="kpis k2">
+          ${kpi('Typical time to pay', recentMed === null ? '—' : days(recentMed), `Median, ${esc(span)} · ${overall ? `${days(overall.median)} across 2025–26` : ''}`)}
+          ${kpi('Pay on signup day', fmtPct(sameDay), `${fmtPct(week)} within a week`)}
+          ${kpi('Pay within 30 days', fmtPct(month), `${fmtPct(late)} take 3 months or more`)}
+          ${po ? kpi('PushOwl: install to paying', days(po.median), 'Median, after the app trial') : ''}
+        </div>
+        <div class="pbars wide compact">
+          ${c.distribution.map((d) => `<div class="pbar"><span class="name">${esc(d.bucket === '0' ? 'Same day' : d.bucket === '365+' ? 'Over a year' : `${d.bucket} days`)}</span>
+            <span class="track"><span class="fill" style="width:${(d.share / maxShare) * 100}%;background:var(--metric)"></span></span>
+            <span class="val">${fmtPct(d.share)}</span></div>`).join('')}
+        </div>
+      </section>`;
+  }
+
+  function cohortCard() {
+    if (!state.biz.conversion) return '';
+    return `
+      <section class="card">
+        <div class="card-head"><h2>Do creator-week signups convert as usual?</h2><span class="muted">Share of each signup week paying within 14 and 30 days</span></div>
+        <div class="legend">
+          <span><i class="lg-line"></i> Paying within 14 days</span>
+          <span><i class="lg-line dash"></i> Paying within 30 days</span>
+          <span><i class="lg-box"></i> Creator posts that week</span>
+        </div>
+        <div class="chart" id="imp-cohort"></div>
+      </section>`;
+  }
+
+  function drawCohorts(box) {
+    const f = state.imp, c = state.biz.conversion;
+    const weeks = c.cohorts.map((w) => {
+      const start = parseDay(w.week);
+      const isos = Array.from({ length: 7 }, (_, i) => isoDay(addDays(start, i)));
+      return {
+        ...w,
+        r14: w.d14 === null || !w.signups ? null : (w.d14 / w.signups) * 100,
+        r30: w.d30 === null || !w.signups ? null : (w.d30 / w.signups) * 100,
+        posts: state.data.posts.filter((p) => (f.campaign === 'all' || p.campaign === f.campaign) && isos.includes(String(p.date_live).slice(0, 10))).length,
+      };
+    });
+    const W = Math.max(320, box.clientWidth), H = 330, mg = { t: 14, r: 52, b: 40, l: 40 };
+    const iw = W - mg.l - mg.r, ih = H - mg.t - mg.b;
+    const maxR = Math.max(1, ...weeks.flatMap((x) => [x.r14 || 0, x.r30 || 0]));
+    const stepV = fineStep(maxR / 4), topV = stepV * 4;
+    const stepP = Math.max(1, Math.ceil(Math.max(1, ...weeks.map((x) => x.posts)) / 4)), topP = stepP * 4;
+    const bw = iw / weeks.length;
+    const cx = (i) => mg.l + i * bw + bw / 2;
+    const yV = (v) => mg.t + ih - (v / topV) * ih;
+    const yP = (v) => mg.t + ih - (v / topP) * ih;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Share of each signup week paying within 14 and 30 days">`;
+    for (let i = 0; i <= 4; i++) {
+      svg += `<line x1="${mg.l}" x2="${W - mg.r}" y1="${yV(i * stepV)}" y2="${yV(i * stepV)}" stroke="var(--grid)" />`;
+      svg += `<text x="${W - mg.r + 6}" y="${yV(i * stepV) + 4}" class="ax-line">${+(i * stepV).toFixed(1)}%</text>`;
+      svg += `<text x="${mg.l - 6}" y="${yP(i * stepP) + 4}" text-anchor="end">${i * stepP}</text>`;
+    }
+    svg += `<text x="${mg.l - 6}" y="${H - 2}" text-anchor="end" class="ax-title">Posts</text>`;
+    svg += `<text x="${W}" y="${H - 2}" text-anchor="end" class="ax-title">Paying</text>`;
+    const labelEvery = Math.ceil(weeks.length / Math.max(2, Math.floor(iw / 64)));
+    weeks.forEach((x, i) => {
+      const w = Math.min(20, bw * 0.6);
+      if (x.posts) svg += `<rect x="${cx(i) - w / 2}" y="${yP(x.posts)}" width="${w}" height="${mg.t + ih - yP(x.posts)}" rx="2" fill="var(--bar-muted)" />`;
+      if (i % labelEvery === 0) svg += `<text x="${cx(i)}" y="${H - 18}" text-anchor="middle">${esc(fmtDay(x.week))}</text>`;
+    });
+    const line = (key, dash) => {
+      let d = '', pen = false;
+      weeks.forEach((x, i) => {
+        if (x[key] === null) { pen = false; return; }
+        d += `${pen ? 'L' : 'M'}${cx(i).toFixed(1)} ${yV(x[key]).toFixed(1)}`; pen = true;
+      });
+      return `<path d="${d}" fill="none" stroke="${dash ? 'var(--fg-2)' : 'var(--metric)'}" stroke-width="${dash ? 1.5 : 2}" ${dash ? 'stroke-dasharray="4 3"' : ''} stroke-linejoin="round" />`;
+    };
+    svg += line('r30', true) + line('r14', false);
+    weeks.forEach((x, i) => { if (x.r14 !== null) svg += `<circle cx="${cx(i)}" cy="${yV(x.r14)}" r="2.5" fill="var(--metric)" />`; });
+    weeks.forEach((x, i) => { svg += `<rect data-i="${i}" x="${mg.l + i * bw}" y="${mg.t}" width="${bw}" height="${ih}" fill="transparent" />`; });
+    svg += '</svg>';
+    box.innerHTML = svg;
+    box.querySelectorAll('rect[data-i]').forEach((r) => {
+      r.addEventListener('mousemove', (e) => {
+        const x = weeks[+r.dataset.i];
+        const rate = (v, n) => (v === null ? `within ${n} days: not complete yet` : `${v.toFixed(1)}% within ${n} days`);
+        showTip(e, `<div class="t-h">Signed up week of ${esc(fmtDay(x.week, true))}</div>
+          <div class="t-v">${fmtN(x.signups)} signups</div>
+          <div>${rate(x.r14, 14)}</div><div>${rate(x.r30, 30)}</div>
+          <div>Creator posts: ${x.posts}</div>`);
+      });
+      r.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; });
+    });
+  }
+
+  function methodology() {
+    return `
+      <details class="method">
+        <summary>How these numbers are calculated</summary>
+        <ul>
+          <li><b>Data.</b> NPCs, signups and Shopify installs come from NAO for the Ecommerce BU, split into Brevo Ecommerce and PushOwl. The lines show the whole segment, not only customers attributed to creators, so they show trend, not cause. Creator posts and newsletter sends come from the Command Center sheet.</li>
+          <li><b>NPC</b> = a new paying customer, counted on the day of its first recurring invoice that wasn't cancelled. The last day or two always look low until billing data lands.</li>
+          <li><b>Signups.</b> Brevo Ecommerce = new Brevo organizations in the Ecommerce BU, bots and fakes excluded, available from Nov 2, 2025. PushOwl = shops installing the PushOwl Shopify app for the first time; zero from Oct 21, 2026, when the app was delisted.</li>
+          <li><b>Shopify installs.</b> Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count). PushOwl = first-time PushOwl app installs.</li>
+          <li><b>Impressions</b> are counted on the day a post went live, at their latest reading (views for video). Newsletter sends count their recipients.</li>
+          <li><b>Days after a post.</b> For each day with creator posts, the metric on that day and each of the next 14 is compared with a normal day: the same weekday, adjusted for the trend at the time. The grey box is the range chance alone produces (95%); only bars outside it are coloured. Uses every post since Jan 2025, whatever the date range.</li>
+          <li><b>Conversion.</b> NPCs ÷ signups in the same week. Some NPCs pay months after signing up, so a jump in signups lowers this rate at first. The cohort chart follows each signup week instead: the share paying within 14 and 30 days, shown once that window has passed.</li>
+          <li><b>Time to pay</b> is days from signup to first payment for Brevo Ecommerce NPCs since Jan 2025. PushOwl's figure runs from first app install and covers the 62% of PushOwl NPCs that could be matched to an install.</li>
+          <li><b>Campaigns.</b> Each campaign's days are compared with the same weekdays in the 4 weeks before it started; "above normal" means outside the chance range. "Last year" compares the same weekdays a year earlier and includes a year of business growth. Overlapping campaigns share days, so their figures don't add up.</li>
+        </ul>
+      </details>`;
   }
 
   function downloadImpactCsv(buckets) {
