@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const CFG = Object.assign({ endpoint: '', snapshot: 'data/snapshot.json', staleAfterDays: 7 }, window.CC_CONFIG || {});
+  const CFG = Object.assign({ endpoint: '', snapshot: 'data/snapshot.json', business: 'data/business.json', staleAfterDays: 7 }, window.CC_CONFIG || {});
   const PLATFORM_ORDER = ['Instagram', 'TikTok', 'YouTube', 'LinkedIn', 'X', 'Newsletter'];
   const PLATFORM_COLOR = {
     Instagram: 'var(--pf-instagram)', TikTok: 'var(--pf-tiktok)', YouTube: 'var(--pf-youtube)',
@@ -14,7 +14,7 @@
   const CAL_TONE = { 'Needs input': 'warn', Ready: 'info', Built: 'ok', Published: 'ok' };
   const CAL_COLOR = { 'Needs input': 'var(--warn)', Ready: 'var(--info)', Built: 'var(--ok)', Published: 'var(--primary)' };
   const VIEWS = {
-    owned: 'Owned social', influencers: 'Influencer performance', newsletters: 'Newsletters', upcoming: 'Upcoming posts', calendar: 'Content calendar',
+    owned: 'Owned social', influencers: 'Influencer performance', impact: 'Business impact', newsletters: 'Newsletters', upcoming: 'Upcoming posts', calendar: 'Content calendar',
   };
 
   const state = {
@@ -23,6 +23,7 @@
     up: { campaign: 'all', platform: 'all', stage: null, holdOnly: false },
     nl: { campaign: 'all', newsletter: 'all' },
     own: { platform: 'all', days: 30 },
+    imp: { metric: 'signups', segment: 'total', gran: 'day', range: '30d', from: '', to: '', campaign: 'all', hidden: new Set() },
     cal: { platform: 'all', statuses: new Set(), lane: 'all', q: '', showPast: false },
   };
 
@@ -94,8 +95,26 @@
       }
     }
     state.data = prepare(data);
+    state.biz = await loadBusiness();
     renderFreshness();
     render();
+  }
+
+  // Daily business metrics from NAO (Ecommerce BU, split Brevo Ecommerce / PushOwl). Optional: the
+  // Business impact tab says so when the file is missing.
+  async function loadBusiness() {
+    try {
+      const r = await fetch(CFG.business + '?t=' + Date.now());
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const b = await r.json();
+      const metrics = {};
+      Object.entries(b.metrics || {}).forEach(([k, m]) => {
+        metrics[k] = { label: m.label, long: m.long || m.label, map: new Map((m.rows || []).map(([d, be, po]) => [d, [num(be), num(po)]])) };
+      });
+      return { meta: b.meta || {}, metrics };
+    } catch (e) {
+      return { meta: {}, metrics: {}, error: e.message };
+    }
   }
 
   function prepare(d) {
@@ -179,8 +198,8 @@
     document.querySelectorAll('.nav a').forEach((a) => (a.dataset.view === v ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
     const el = $('#view');
     const notice = state.error ? `<div class="notice"><span>${esc(state.error)}</span></div>` : '';
-    el.innerHTML = notice + ({ owned: viewOwned, influencers: viewInfluencers, newsletters: viewNewsletters, upcoming: viewUpcoming, calendar: viewCalendar }[v])();
-    ({ owned: bindOwned, influencers: bindInfluencers, newsletters: bindNewsletters, upcoming: bindUpcoming, calendar: bindCalendar }[v])(el);
+    el.innerHTML = notice + ({ owned: viewOwned, influencers: viewInfluencers, impact: viewImpact, newsletters: viewNewsletters, upcoming: viewUpcoming, calendar: viewCalendar }[v])();
+    ({ owned: bindOwned, influencers: bindInfluencers, impact: bindImpact, newsletters: bindNewsletters, upcoming: bindUpcoming, calendar: bindCalendar }[v])(el);
   }
 
   /* =========================================================
@@ -462,6 +481,394 @@
       bindCSort();
     }));
     bindCSort();
+  }
+
+  /* =========================================================
+     Business impact — creator posts (bars) against NAO business metrics (line)
+     ========================================================= */
+  const SEGMENTS = [['total', 'Ecommerce BU'], ['be', 'Brevo Ecommerce'], ['po', 'PushOwl']];
+  const LINE_METRICS = [['npc', 'NPCs'], ['signups', 'Signups'], ['installs', 'Shopify installs']];
+  const RANGES = [['30d', '30 days'], ['90d', '90 days'], ['12m', '12 months'], ['qtd', 'Quarter to date'], ['ytd', 'Year to date'], ['custom', 'Custom']];
+  const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
+  const METRIC_NOTES = {
+    signups: '<b>How signups are counted:</b> Brevo Ecommerce = new Brevo organizations in the Ecommerce BU (bots and fakes excluded). PushOwl = shops installing the PushOwl Shopify app for the first time. The PushOwl app was delisted from the Shopify App Store, so PushOwl signups are zero from <b>Oct 21, 2026</b>. Brevo Ecommerce signups only exist from <b>Nov 2, 2025</b>: older days can\'t be assigned a BU, so they show as a gap.',
+    installs: '<b>How installs are counted:</b> Brevo Ecommerce = new connections of the Brevo Shopify app (reinstalls count again). PushOwl = shops installing the PushOwl Shopify app for the first time, zero since its delisting on <b>Oct 21, 2026</b>. These come from Brevo\'s own data, not the Shopify Partner Dashboard.',
+  };
+
+  // null = no data for that day (e.g. a tracking gap), which is different from 0, so a missing
+  // half makes the Ecommerce BU total missing too.
+  function segVal(v) {
+    if (!v) return null;
+    const s = state.imp.segment;
+    if (s === 'be') return v[0];
+    if (s === 'po') return v[1];
+    return v[0] === null || v[1] === null ? null : v[0] + v[1];
+  }
+
+  function impRange() {
+    const f = state.imp, b = state.biz;
+    const dates = [...(b.metrics.npc?.map.keys() || [])].sort();
+    const first = parseDay(dates[0]) || parseDay('2026-01-01');
+    const end = parseDay(b.meta.through) || parseDay(dates[dates.length - 1]) || addDays(todayUTC(), -1);
+    let from;
+    if (f.range === '30d') from = addDays(end, -29);
+    else if (f.range === '90d') from = addDays(end, -89);
+    else if (f.range === '12m') from = addDays(end, -364);
+    else if (f.range === 'qtd') from = new Date(Date.UTC(end.getUTCFullYear(), Math.floor(end.getUTCMonth() / 3) * 3, 1));
+    else if (f.range === 'ytd') from = new Date(Date.UTC(end.getUTCFullYear(), 0, 1));
+    let to = end;
+    if (f.range === 'custom') {
+      from = parseDay(f.from) || addDays(end, -89);
+      to = parseDay(f.to) || end;
+      if (to > end) to = end;
+    }
+    if (from > to) from = to;
+    // Weekly view: start on a Monday so the first bar isn't a short week.
+    if (f.gran === 'week') from = weekStart(from);
+    if (from < first) from = first;
+    return { from, to, first, end };
+  }
+
+  // One row per day in range: posts by platform, newsletter sends, metric value and 7-day trailing average.
+  function impDaily(from, to) {
+    const f = state.imp;
+    const m = state.biz.metrics[f.metric];
+    const inCamp = (c) => f.campaign === 'all' || c === f.campaign;
+    const posts = state.data.posts.filter((p) => inCamp(p.campaign) && parseDay(p.date_live));
+    const sends = state.data.newsletters.filter((n) => nlSent(n) && inCamp(n.campaign) && parseDay(n.send_date));
+    const val = (iso) => (m && m.map.has(iso) ? segVal(m.map.get(iso)) : null);
+    const days = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const iso = isoDay(d);
+      const byP = {};
+      posts.filter((p) => String(p.date_live).slice(0, 10) === iso).forEach((p) => { byP[p.platform] = (byP[p.platform] || 0) + 1; });
+      const win = [];
+      for (let i = 0; i < 7; i++) { const v = val(isoDay(addDays(d, -i))); if (v !== null) win.push(v); }
+      days.push({
+        iso, d, byP, posts: sum(Object.values(byP)), value: val(iso),
+        ma: win.length === 7 ? sum(win) / 7 : null,
+        sends: sends.filter((n) => String(n.send_date).slice(0, 10) === iso),
+      });
+    }
+    return days;
+  }
+
+  function impBuckets(days) {
+    if (state.imp.gran === 'day') return days.map((x) => ({ ...x, label: fmtDay(x.iso), title: fmtDay(x.iso, true), n: 1 }));
+    const map = new Map();
+    days.forEach((x) => {
+      const k = isoDay(weekStart(x.d));
+      if (!map.has(k)) map.set(k, { iso: k, byP: {}, posts: 0, value: null, ma: null, sends: [], n: 0, gaps: 0 });
+      const b = map.get(k);
+      Object.entries(x.byP).forEach(([p, c]) => { b.byP[p] = (b.byP[p] || 0) + c; });
+      b.posts += x.posts; b.sends.push(...x.sends); b.n += 1;
+      if (x.value !== null) b.value = (b.value || 0) + x.value; else b.gaps += 1;
+    });
+    // A week with missing days would read as a drop, so leave it out of the line.
+    map.forEach((b) => { if (b.gaps) b.value = null; });
+    return [...map.values()].map((b) => ({
+      ...b, label: fmtDay(b.iso),
+      title: `Week of ${fmtDay(b.iso, true)}${b.n < 7 ? ` (${b.n} of 7 days in range)` : ''}`,
+    }));
+  }
+
+  // For each lag k: how far the metric ran above or below a normal day, k days after a day with
+  // creator posts. "Normal" = the weekday's average over the range (weekends run at about a third of
+  // weekdays) scaled by the 21-day centred trend, so steady growth doesn't read as a creator effect.
+  function impLags(days, maxLag) {
+    const vals = days.filter((x) => x.value !== null);
+    const dowMean = Array.from({ length: 7 }, (_, i) => {
+      const xs = vals.filter((x) => x.d.getUTCDay() === i).map((x) => x.value);
+      return xs.length ? sum(xs) / xs.length : 0;
+    });
+    const adj = days.map((x) => (x.value === null || !dowMean[x.d.getUTCDay()] ? null : x.value / dowMean[x.d.getUTCDay()]));
+    const ratio = adj.map((v, i) => {
+      if (v === null) return null;
+      const win = adj.slice(Math.max(0, i - 10), i + 11).filter((w) => w !== null);
+      const t = sum(win) / win.length;
+      return t ? v / t : null;
+    });
+    const all = ratio.filter((r) => r !== null).map((r) => r - 1);
+    const sd = Math.sqrt(sum(all.map((v) => v * v)) / Math.max(1, all.length - 1));
+    const postIdx = days.map((x, i) => (x.posts ? i : -1)).filter((i) => i >= 0);
+    const out = [];
+    for (let k = 0; k <= maxLag; k++) {
+      const rs = postIdx.map((i) => ratio[i + k]).filter((r) => r !== null && r !== undefined);
+      out.push({
+        k, n: rs.length,
+        lift: rs.length ? sum(rs) / rs.length - 1 : null,
+        noise: rs.length ? (2 * sd) / Math.sqrt(rs.length) : null,
+      });
+    }
+    return out;
+  }
+
+  // Bar series stacked in the chart: creator posts by platform, then newsletter sends on top.
+  function impStack(buckets) {
+    const keys = [...new Set(buckets.flatMap((x) => Object.keys(x.byP)))].sort(byPlatformOrder);
+    if (buckets.some((x) => x.sends.length)) keys.push('Newsletter');
+    return keys;
+  }
+  const stackVal = (x, k) => (k === 'Newsletter' ? x.sends.length : x.byP[k] || 0);
+
+  function viewImpact() {
+    const f = state.imp, b = state.biz;
+    if (!b || !b.metrics.npc) {
+      return `<div class="empty"><h3>No business data loaded</h3><p>This tab reads <code>data/business.json</code>${b && b.error ? ` (${esc(b.error)})` : ''}.</p></div>`;
+    }
+    if (!b.metrics[f.metric]) f.metric = 'npc';
+    const { from, to, first, end } = impRange();
+    const days = impDaily(from, to);
+    const buckets = impBuckets(days);
+    const m = b.metrics[f.metric];
+    const segName = SEGMENTS.find((x) => x[0] === f.segment)[1];
+    const span = days.length;
+    const prev = impDaily(addDays(from, -span), addDays(from, -1)).filter((x) => x.value !== null);
+    const total = sum(days.map((x) => x.value));
+    const prevTotal = prev.length === span && from > first ? sum(prev.map((x) => x.value)) : null;
+    const change = prevTotal ? (total - prevTotal) / prevTotal : null;
+    const weekdays = days.filter((x) => x.value !== null && x.d.getUTCDay() % 6 !== 0);
+    const missing = days.filter((x) => x.value === null).length;
+    const postsN = sum(days.map((x) => x.posts));
+    const postDays = days.filter((x) => x.posts).length;
+    const plats = [...new Set(days.flatMap((x) => Object.keys(x.byP)))];
+    const sendsN = sum(days.map((x) => x.sends.length));
+    const camps = [...new Set([...state.data.posts.map((p) => p.campaign), ...state.data.newsletters.filter(nlSent).map((n) => n.campaign)])].filter((c) => c && c !== 'unassigned');
+    const fromIso = isoDay(from), toIso = isoDay(to);
+    const { first: lagFrom, end: lagTo } = impRange();
+    const lagDays = impDaily(lagFrom, lagTo);
+    const lagPostDays = lagDays.filter((x) => x.posts).length;
+    const lagOk = lagPostDays >= 5;
+    const lg = (key, swatch, label) => `<button type="button" class="lg-item" data-imp-series="${esc(key)}" aria-pressed="${!f.hidden.has(key)}" title="Show or hide">${swatch} ${esc(label)}</button>`;
+
+    return `
+      <p class="lede">Creator posts going live against <b>${esc(m.long)}</b> for the <b>${esc(segName)}</b>, ${esc(fmtDay(fromIso, true))} to ${esc(fmtDay(toIso, true))}. The line is the whole segment, not only customers attributed to creators: read it for trend, not cause.</p>
+      ${METRIC_NOTES[f.metric] ? `<div class="notice"><span>${METRIC_NOTES[f.metric]}</span></div>` : ''}
+      <div class="toolbar">
+        <div class="field"><span class="label">Line</span>
+          <div class="seg" role="group" aria-label="Line metric">
+            ${LINE_METRICS.map(([k, l]) => `<button data-imp-metric="${k}" aria-pressed="${f.metric === k}" ${b.metrics[k] ? '' : 'disabled title="Not loaded from NAO yet"'}>${l}</button>`).join('')}
+          </div></div>
+        <div class="field"><span class="label">Segment</span>
+          <div class="seg" role="group" aria-label="Segment">
+            ${SEGMENTS.map(([k, l]) => `<button data-imp-seg="${k}" aria-pressed="${f.segment === k}">${l}</button>`).join('')}
+          </div></div>
+        <div class="field"><span class="label">View</span>
+          <div class="seg" role="group" aria-label="Granularity">
+            <button data-imp-gran="day" aria-pressed="${f.gran === 'day'}">Daily</button>
+            <button data-imp-gran="week" aria-pressed="${f.gran === 'week'}">Weekly</button>
+          </div></div>
+        <div class="field"><label for="imp-range">Date range</label>
+          <select id="imp-range">${RANGES.map(([k, l]) => `<option value="${k}" ${f.range === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${f.range === 'custom' ? `
+          <div class="field"><label for="imp-from">From</label><input type="date" id="imp-from" value="${fromIso}" min="${isoDay(first)}" max="${isoDay(end)}"></div>
+          <div class="field"><label for="imp-to">To</label><input type="date" id="imp-to" value="${toIso}" min="${isoDay(first)}" max="${isoDay(end)}"></div>` : ''}
+        <div class="field"><label for="imp-campaign">Campaign</label>
+          <select id="imp-campaign">
+            <option value="all">All campaigns</option>
+            ${camps.map((c) => `<option value="${esc(c)}" ${f.campaign === c ? 'selected' : ''}>${esc(campaignName(c))}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="kpis">
+        ${kpi('Creator posts live', fmtN(postsN), postsN ? `On ${postDays} days · ${plats.length} platform${plats.length === 1 ? '' : 's'}` : 'None in this range')}
+        ${kpi(m.label, fmtN(total), missing ? `Excludes ${missing} day${missing === 1 ? '' : 's'} with no data` : change === null ? segName : `${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}% vs previous ${span} days`)}
+        ${kpi(`${m.label} per weekday`, weekdays.length ? fmtN(sum(weekdays.map((x) => x.value)) / weekdays.length) : '—', 'Average, Monday to Friday')}
+        ${kpi('Newsletter sends', fmtN(sendsN), sendsN ? [...new Set(days.flatMap((x) => x.sends.map((n) => n.newsletter)))].join(', ') : 'None in this range')}
+      </div>
+      <section class="card">
+        <div class="card-head"><h2>Posts live vs ${esc(m.label)}</h2><span class="muted">${f.gran === 'day' ? 'Per day' : 'Per week, Monday start'} · ${esc(segName)}</span>
+          <span class="spacer"></span><button class="btn secondary sm" id="imp-csv" type="button">Download CSV</button></div>
+        <div class="legend" aria-label="Click to show or hide a series">
+          ${impStack(buckets).map((k) => lg(k, pdot(k), k === 'Newsletter' ? 'Newsletter sends' : `${k} posts`)).join('')}
+          ${lg('line', '<i class="lg-line"></i>', m.label)}
+          ${f.gran === 'day' ? lg('ma', '<i class="lg-line dash"></i>', '7-day average') : ''}
+          <span class="lg-hint">Click to show or hide</span>
+        </div>
+        <div class="chart" id="imp-chart"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>What happens to ${esc(m.label)} in the days after a creator post?</h2><span class="muted">All posts since ${esc(fmtDay(isoDay(lagFrom), true))} · ${lagPostDays} posting days · not limited by the date range above</span></div>
+        ${lagOk ? `
+          <p class="note">For every day a creator post went live (<b>day 0</b>), we take ${esc(m.label)} on that day and on each of the 14 days after, and compare them with a <b>normal day</b>: the same weekday, adjusted for the overall trend at that time. A bar at <b>+5%</b> over <b>+3</b> means that 3 days after posting days, ${esc(m.label)} averaged 5% above normal. The grey box behind each bar is the range chance alone produces: a bar that stays inside its box is not a real signal, and only bars that break out of it are coloured.</p>
+          <div class="chart" id="imp-lag"></div>
+          <p class="note" id="imp-lag-note"></p>`
+        : `<p class="muted">Needs posts on at least 5 days. There are ${lagPostDays} so far${f.campaign !== 'all' ? ' for this campaign' : ''}.</p>`}
+      </section>`;
+  }
+
+  function bindImpact(el) {
+    const f = state.imp;
+    const on = (sel, ev, fn) => el.querySelectorAll(sel).forEach((x) => x.addEventListener(ev, fn));
+    on('[data-imp-metric]', 'click', (e) => { f.metric = e.currentTarget.dataset.impMetric; render(); });
+    on('[data-imp-seg]', 'click', (e) => { f.segment = e.currentTarget.dataset.impSeg; render(); });
+    on('[data-imp-gran]', 'click', (e) => { f.gran = e.currentTarget.dataset.impGran; render(); });
+    on('[data-imp-series]', 'click', (e) => {
+      const k = e.currentTarget.dataset.impSeries;
+      if (f.hidden.has(k)) f.hidden.delete(k); else f.hidden.add(k);
+      render();
+    });
+    on('#imp-range', 'change', (e) => {
+      if (e.target.value === 'custom') { const r = impRange(); f.from = isoDay(r.from); f.to = isoDay(r.to); }
+      f.range = e.target.value; render();
+    });
+    on('#imp-from', 'change', (e) => { f.from = e.target.value; render(); });
+    on('#imp-to', 'change', (e) => { f.to = e.target.value; render(); });
+    on('#imp-campaign', 'change', (e) => { f.campaign = e.target.value; render(); });
+    if (!state.biz?.metrics.npc) return;
+    const { from, to } = impRange();
+    const days = impDaily(from, to);
+    const buckets = impBuckets(days);
+    const box = el.querySelector('#imp-chart');
+    if (box) drawImpact(box, buckets);
+    const lagBox = el.querySelector('#imp-lag');
+    if (lagBox) { const r = impRange(); drawLags(lagBox, impLags(impDaily(r.first, r.end), 14)); }
+    on('#imp-csv', 'click', () => downloadImpactCsv(buckets));
+  }
+
+  function showTip(e, html) {
+    const tip = $('#tooltip');
+    tip.innerHTML = html;
+    tip.hidden = false;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.min(window.innerWidth - tw - 8, e.clientX + 12) + 'px';
+    tip.style.top = Math.min(window.innerHeight - th - 8, e.clientY + 12) + 'px';
+  }
+
+  function drawImpact(box, buckets) {
+    const f = state.imp, m = state.biz.metrics[f.metric];
+    const stack = impStack(buckets).filter((k) => !f.hidden.has(k));
+    const showLine = !f.hidden.has('line');
+    const showMa = f.gran === 'day' && !f.hidden.has('ma');
+    const W = Math.max(320, box.clientWidth), H = 324, mg = { t: 14, r: 52, b: 40, l: 40 };
+    const iw = W - mg.l - mg.r, ih = H - mg.t - mg.b;
+    const stackTotal = (x) => sum(stack.map((k) => stackVal(x, k)));
+    // Both axes get 4 equal steps so they share gridlines.
+    const stepP = Math.max(1, Math.ceil(Math.max(1, ...buckets.map(stackTotal)) / 4));
+    const topP = stepP * 4;
+    const maxV = Math.max(1, ...(showLine ? buckets.map((x) => x.value || 0) : []), ...(showMa ? buckets.map((x) => x.ma || 0) : []));
+    const stepV = fineStep(maxV / 4);
+    const topV = stepV * 4;
+    const bw = iw / buckets.length;
+    const yP = (v) => mg.t + ih - (v / topP) * ih;
+    const yV = (v) => mg.t + ih - (v / topV) * ih;
+    const cx = (i) => mg.l + i * bw + bw / 2;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Creator posts per ${f.gran} against ${esc(m.label)}">`;
+    for (let i = 0; i <= 4; i++) {
+      svg += `<line x1="${mg.l}" x2="${W - mg.r}" y1="${yP(i * stepP)}" y2="${yP(i * stepP)}" stroke="var(--grid)" />`;
+      if (stack.length) svg += `<text x="${mg.l - 6}" y="${yP(i * stepP) + 4}" text-anchor="end">${i * stepP}</text>`;
+      if (showLine || showMa) svg += `<text x="${W - mg.r + 6}" y="${yV(i * stepV) + 4}" text-anchor="start" class="ax-line">${fmtN(i * stepV)}</text>`;
+    }
+    if (stack.length) svg += `<text x="${mg.l - 6}" y="${H - 2}" text-anchor="end" class="ax-title">Posts</text>`;
+    if (showLine || showMa) svg += `<text x="${W}" y="${H - 2}" text-anchor="end" class="ax-title">${esc(m.label)}</text>`;
+    const labelEvery = Math.ceil(buckets.length / Math.max(2, Math.floor(iw / 64)));
+    buckets.forEach((x, i) => {
+      let y0 = mg.t + ih;
+      const w = Math.max(1, Math.min(28, bw * 0.7));
+      stack.forEach((k) => {
+        const c = stackVal(x, k);
+        if (!c) return;
+        const h = (c / topP) * ih;
+        y0 -= h;
+        svg += `<rect x="${cx(i) - w / 2}" y="${y0}" width="${w}" height="${Math.max(1, h - 1)}" fill="${PLATFORM_COLOR[k] || 'var(--fg-3)'}" />`;
+      });
+      if (i % labelEvery === 0) svg += `<text x="${cx(i)}" y="${H - 18}" text-anchor="middle">${esc(x.label)}</text>`;
+    });
+    const path = (key) => {
+      let d = '', pen = false;
+      buckets.forEach((x, i) => {
+        if (x[key] === null) { pen = false; return; }
+        d += `${pen ? 'L' : 'M'}${cx(i).toFixed(1)} ${yV(x[key]).toFixed(1)}`;
+        pen = true;
+      });
+      return d;
+    };
+    if (showMa) svg += `<path d="${path('ma')}" fill="none" stroke="var(--fg-2)" stroke-width="1.5" stroke-dasharray="4 3" />`;
+    if (showLine) {
+      svg += `<path d="${path('value')}" fill="none" stroke="var(--metric)" stroke-width="2" stroke-linejoin="round" />`;
+      if (buckets.length <= 60) buckets.forEach((x, i) => { if (x.value !== null) svg += `<circle cx="${cx(i)}" cy="${yV(x.value)}" r="2.5" fill="var(--metric)" />`; });
+    }
+    svg += `<line id="imp-cursor" x1="0" x2="0" y1="${mg.t}" y2="${mg.t + ih}" stroke="var(--fg-3)" stroke-dasharray="2 3" visibility="hidden" />`;
+    buckets.forEach((x, i) => { svg += `<rect data-i="${i}" x="${mg.l + i * bw}" y="${mg.t}" width="${bw}" height="${ih}" fill="transparent" />`; });
+    svg += '</svg>';
+    box.innerHTML = svg;
+    const cursor = box.querySelector('#imp-cursor');
+    const allKeys = impStack(buckets);
+    box.querySelectorAll('rect[data-i]').forEach((r) => {
+      r.addEventListener('mousemove', (e) => {
+        const i = +r.dataset.i, x = buckets[i];
+        cursor.setAttribute('x1', cx(i)); cursor.setAttribute('x2', cx(i)); cursor.setAttribute('visibility', 'visible');
+        const pl = allKeys.filter((k) => k !== 'Newsletter' && x.byP[k]).map((k) => `<div>${pdot(k)} ${esc(k)}: ${x.byP[k]}</div>`).join('');
+        showTip(e, `<div class="t-h">${esc(x.title)}</div>
+          <div class="t-v">${esc(m.label)}: <b>${x.value === null ? '—' : fmtN(x.value)}</b>${f.gran === 'day' && x.ma !== null ? ` · 7-day avg ${fmtN(x.ma)}` : ''}</div>
+          <div class="t-v">Creator posts: <b>${x.posts}</b></div>${pl}
+          ${x.sends.length ? `<div>${pdot('Newsletter')} Newsletter: ${esc(x.sends.map((n) => n.newsletter).join(', '))}</div>` : ''}`);
+      });
+      r.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; cursor.setAttribute('visibility', 'hidden'); });
+    });
+  }
+
+  function drawLags(box, lags) {
+    const m = state.biz.metrics[state.imp.metric];
+    const pct = (v) => `${v >= 0 ? '+' : '−'}${+Math.abs(v * 100).toFixed(1)}%`;
+    const W = Math.max(320, box.clientWidth), H = 230, mg = { t: 12, r: 12, b: 40, l: 52 };
+    const iw = W - mg.l - mg.r, ih = H - mg.t - mg.b;
+    const ext = Math.max(0.05, ...lags.map((l) => Math.abs(l.lift || 0)), ...lags.map((l) => l.noise || 0));
+    const step = fineStep(ext / 2);
+    const top = step * 2;
+    const y = (v) => mg.t + ih / 2 - (v / top) * (ih / 2);
+    const bw = iw / lags.length;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(m.label)} versus a normal day, by days after a creator post">`;
+    [-top, -step, 0, step, top].forEach((v) => {
+      svg += `<line x1="${mg.l}" x2="${W - mg.r}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? 'var(--fg-3)' : 'var(--grid)'}" />`;
+      svg += `<text x="${mg.l - 6}" y="${y(v) + 4}" text-anchor="end">${v === 0 ? 'Normal' : pct(v)}</text>`;
+    });
+    lags.forEach((l, i) => {
+      const x0 = mg.l + i * bw, w = bw * 0.56, x = x0 + (bw - w) / 2;
+      if (l.lift !== null) {
+        const real = Math.abs(l.lift) > l.noise;
+        svg += `<rect x="${x - 3}" y="${y(l.noise)}" width="${w + 6}" height="${y(-l.noise) - y(l.noise)}" rx="3" fill="var(--grid)" />`;
+        svg += `<rect x="${x}" y="${Math.min(y(l.lift), y(0))}" width="${w}" height="${Math.max(1, Math.abs(y(l.lift) - y(0)))}" rx="2" fill="${real ? 'var(--metric)' : 'var(--bar-muted)'}" />`;
+        if (bw > 34) svg += `<text x="${x + w / 2}" y="${l.lift >= 0 ? y(Math.max(l.lift, l.noise)) - 4 : y(Math.min(l.lift, -l.noise)) + 12}" text-anchor="middle" class="${real ? 'ax-line' : ''}">${pct(l.lift)}</text>`;
+      }
+      svg += `<text x="${x + w / 2}" y="${H - 22}" text-anchor="middle">${l.k === 0 ? 'Day 0' : '+' + l.k}</text>`;
+      svg += `<rect data-i="${i}" x="${x0}" y="${mg.t}" width="${bw}" height="${ih}" fill="transparent" />`;
+    });
+    svg += `<text x="${mg.l + iw / 2}" y="${H - 4}" text-anchor="middle" class="ax-title">Days after a creator post went live</text></svg>`;
+    box.innerHTML = svg;
+    box.querySelectorAll('rect[data-i]').forEach((r) => {
+      r.addEventListener('mousemove', (e) => {
+        const l = lags[+r.dataset.i];
+        if (l.lift === null) return;
+        const when = l.k === 0 ? 'On posting days' : `${l.k} day${l.k === 1 ? '' : 's'} after posting days`;
+        showTip(e, `<div class="t-h">${when}</div>
+          <div class="t-v">${esc(m.label)} ${pct(l.lift)} vs a normal day</div>
+          <div>Chance range: ±${(l.noise * 100).toFixed(1)}% · ${Math.abs(l.lift) > l.noise ? 'outside it, so likely real' : 'inside it, so not a signal'}</div>
+          <div>Based on ${l.n} posting days</div>`);
+      });
+      r.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; });
+    });
+    const real = lags.filter((l) => l.lift !== null && Math.abs(l.lift) > l.noise).sort((a, b) => b.lift - a.lift);
+    const note = $('#imp-lag-note');
+    if (note) {
+      const days = (k) => (k === 0 ? 'on posting days' : `${k} day${k === 1 ? '' : 's'} after posting days`);
+      note.innerHTML = real.length
+        ? `<b>What this shows:</b> ${real.map((l) => `${esc(m.label)} ran <b>${pct(l.lift)}</b> vs normal ${days(l.k)}`).join('; ')}. Every other day is within chance. One or two bars outside their box can still be luck when 15 are tested, so look for the same day standing out across campaigns before reading it as an effect.`
+        : `<b>What this shows:</b> no day stands out from chance. ${esc(m.label)} after creator posts look like ${esc(m.label)} on any other comparable day.`;
+    }
+  }
+
+  function downloadImpactCsv(buckets) {
+    const f = state.imp, m = state.biz.metrics[f.metric];
+    const plats = [...new Set(buckets.flatMap((x) => Object.keys(x.byP)))].sort(byPlatformOrder);
+    const segName = SEGMENTS.find((x) => x[0] === f.segment)[1];
+    const head = [f.gran === 'day' ? 'date' : 'week_start', 'posts_live', ...plats.map((p) => `posts_${p.toLowerCase()}`), `${f.metric}_${segName.toLowerCase().replace(/\s+/g, '_')}`, 'newsletter_sends'];
+    const rows = buckets.map((x) => [x.iso, x.posts, ...plats.map((p) => x.byP[p] || 0), x.value ?? '', x.sends.length]);
+    const csv = [head, ...rows].map((r) => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `creator-posts-vs-${f.metric}-${f.gran}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   /* =========================================================
@@ -776,6 +1183,10 @@
       r.addEventListener('mouseleave', () => { tip.hidden = true; });
     });
   }
+  function fineStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(raw > 0 ? raw : 1)));
+    return ([1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((n) => n * p >= raw) || 10) * p;
+  }
   function niceStep(raw) {
     const p = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1))));
     const n = raw / p;
@@ -1036,7 +1447,7 @@
     $('#menu-btn').setAttribute('aria-expanded', String(open));
   });
   let rz;
-  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (currentView() === 'owned') render(); }, 150); });
+  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (['owned', 'impact'].includes(currentView())) render(); }, 150); });
   // Pages stay open on a wall screen: pull fresh data every 3 hours.
   setInterval(load, 3 * 60 * 60 * 1000);
   load();

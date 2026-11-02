@@ -43,6 +43,7 @@
   --bar: #0b996e;
   --bar-muted: #b3dfd2;
   --grid: #f0ebd8;
+  --metric: #006a43;
 
   --radius: .5rem;
   --radius-lg: .75rem;
@@ -61,7 +62,7 @@
     --info: #93cbff; --info-bg: #182a3a; --idle: #b5b5b5; --idle-bg: #2a2d29;
     --pf-instagram: #fd86b1; --pf-tiktok: #e3e3e3; --pf-youtube: #ff6073; --pf-linkedin: #78beff;
     --pf-newsletter: #d1c4a0; --pf-x: #cfcfcf;
-    --bar: #48ac8e; --bar-muted: #2f5c4c; --grid: #2a2f28;
+    --bar: #48ac8e; --bar-muted: #2f5c4c; --grid: #2a2f28; --metric: #8fe0c0;
     --shadow-pop: 0 10px 20px -4px rgba(0, 0, 0, .5);
   }
 }
@@ -76,7 +77,7 @@
   --info: #93cbff; --info-bg: #182a3a; --idle: #b5b5b5; --idle-bg: #2a2d29;
   --pf-instagram: #fd86b1; --pf-tiktok: #e3e3e3; --pf-youtube: #ff6073; --pf-linkedin: #78beff;
   --pf-newsletter: #d1c4a0; --pf-x: #cfcfcf;
-  --bar: #48ac8e; --bar-muted: #2f5c4c; --grid: #2a2f28;
+  --bar: #48ac8e; --bar-muted: #2f5c4c; --grid: #2a2f28; --metric: #8fe0c0;
   --shadow-pop: 0 10px 20px -4px rgba(0, 0, 0, .5);
 }
 
@@ -429,3 +430,20 @@ tr.total td { font-weight: 600; border-top: 1px solid var(--line); background: v
 .plink { display: inline-flex; align-items: center; gap: .3rem; color: var(--fg-2); }
 .plink a { color: var(--primary); font-weight: 500; text-decoration: none; }
 .plink a:hover { text-decoration: underline; }
+
+/* Business impact */
+.card-head .spacer { flex: 1; }
+.btn.sm { padding: .3rem .7rem; font-size: .8rem; }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+.legend .lg-line { width: 1.1rem; height: 0; border-top: 2px solid var(--metric); border-radius: 0; }
+.legend .lg-line.dash { border-top: 2px dashed var(--fg-2); }
+.chart text.ax-title { font-weight: 600; }
+.chart text.ax-line { fill: var(--metric); }
+.card .note { margin: 0; font-size: .82rem; color: var(--fg-2); max-width: 80ch; }
+.legend .lg-item {
+  display: inline-flex; align-items: center; gap: .35rem; border: 1px solid transparent; background: none; color: var(--fg-2);
+  font: inherit; padding: .15rem .45rem; margin: 0 -.2rem; border-radius: 99px; cursor: pointer;
+}
+.legend .lg-item:hover { border-color: var(--line); }
+.legend .lg-item[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+.legend .lg-hint { color: var(--fg-3); font-size: .72rem; margin-left: auto; }
